@@ -15,14 +15,12 @@ import {
   isArray,
   isClass,
   psLog,
-} from '@huolala-tech/page-spy-base/dist/utils';
-import {
   SocketState,
   SocketStoreBase,
-} from '@huolala-tech/page-spy-base/dist/socket-base';
-import { atom } from '@huolala-tech/page-spy-base/dist/atom';
-import { Client } from '@huolala-tech/page-spy-base/dist/client';
-import { ROOM_SESSION_KEY } from '@huolala-tech/page-spy-base/dist/constants';
+  atom,
+  Client,
+  ROOM_SESSION_KEY,
+} from '@huolala-tech/page-spy-base';
 import type {
   PageSpyPlugin,
   PageSpyPluginLifecycle,
@@ -226,7 +224,13 @@ class PageSpy {
       ) {
         return;
       }
-      (plugin[lifecycle] as any)?.apply(plugin, args);
+      try {
+        (plugin[lifecycle] as any)?.apply(plugin, args);
+      } catch (e) {
+        // Isolate plugin errors so that one faulty plugin
+        // does not break the lifecycle of the remaining plugins.
+        psLog.error(`Plugin [${plugin.name}] threw in "${lifecycle}":`, e);
+      }
     });
   }
 

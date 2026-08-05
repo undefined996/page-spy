@@ -6,11 +6,9 @@ import {
   isString,
   isURL,
   psLog,
-} from '@huolala-tech/page-spy-base/dist/utils';
-import {
   Reason,
   MAX_SIZE,
-} from '@huolala-tech/page-spy-base/dist/network/common';
+} from '@huolala-tech/page-spy-base';
 import RNNetworkProxyBase from './base';
 import { IS_FETCH_HEADER } from './xhr-proxy';
 import { addContentTypeHeader, getFormattedBody } from '../common';
@@ -37,7 +35,7 @@ export default class FetchProxy extends RNNetworkProxyBase {
       return;
     }
     this.fetch = originFetch;
-    
+
     globalThis.fetch = function (
       input: RequestInfo | URL,
       init: RequestInit = {},
