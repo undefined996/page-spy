@@ -1,4 +1,5 @@
 import { z, ZodError } from 'zod';
+import type { InitConfigBase } from '@huolala-tech/page-spy-types';
 import { DataItem as ConsoleData } from '@huolala-tech/page-spy-types/lib/console';
 import { DataItem as StorageData } from '@huolala-tech/page-spy-types/lib/storage';
 import { DataItem as PageData } from '@huolala-tech/page-spy-types/lib/page';
@@ -6,8 +7,19 @@ import { DataItem as DatabaseData } from '@huolala-tech/page-spy-types/lib/datab
 import { DataItem as SystemData } from '@huolala-tech/page-spy-types/lib/system';
 import { RequestInfo } from '@huolala-tech/page-spy-types/lib/network';
 
+/**
+ * Helper type to unwrap the TypeScript type from a Zod schema.
+ */
 export type SchemaUnwrap<T extends z.ZodType> = z.infer<T>;
 
+/**
+ * Creates a Zod schema validator for data processor functions.
+ *
+ * Data processors are optional filters that can inspect and potentially
+ * drop data items before they are sent to the server. Return false to drop the item.
+ *
+ * @returns Zod schema for a processor function: (data: T) => boolean | void
+ */
 const processorFn = <T>() =>
   z.function().args(z.custom<T>()).returns(z.boolean().optional());
 
@@ -96,14 +108,69 @@ const baseSchema = z
   .partial()
   .strict();
 
-export type InitConfigBase = z.infer<typeof baseSchema>;
+/**
+ * Base configuration type for PageSpy initialization.
+ *
+ * The type contract is defined in `page-spy-types` so plugin authors don't
+ * need to depend on this package. It is re-exported here for backward
+ * compatibility. The zod schema below is the runtime validation of the same
+ * shape; a compile-time assertion keeps both in sync.
+ */
+export type { InitConfigBase };
 
+// Drift check: the zod-inferred shape and the contract must stay mutually
+// assignable in both directions. Adding/removing a field or changing a
+// field's type on either side breaks one of the constraints and fails
+// compilation.
+//
+// Two normalization steps are required:
+// 1. zod infers optional properties as `x?: T | undefined` while the contract
+//    uses `x?: T`. `Normalize` strips the optional modifier and `undefined`
+//    from both sides so the two notations compare equal.
+// 2. After normalization every property is required, so an extra or missing
+//    field on either side breaks assignability in one direction. Plain
+//    (un-normalized) assignability would silently allow extra optional fields.
+type AssertTrue<T extends true> = T;
+type Normalize<T> = { [K in keyof T]-?: Exclude<T[K], undefined> };
+type Schema = Normalize<z.infer<typeof baseSchema>>;
+type Contract = Normalize<InitConfigBase>;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+type _schemaMatchesContract = AssertTrue<
+  [Schema] extends [Contract] ? true : false
+>;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+type _contractMatchesSchema = AssertTrue<
+  [Contract] extends [Schema] ? true : false
+>;
+
+/**
+ * Extends the base configuration schema with platform-specific fields.
+ *
+ * @param extendFn - Function that receives Zod and returns additional schema fields
+ * @returns Merged schema combining base and platform-specific options
+ *
+ * @example
+ * ```typescript
+ * const browserSchema = extendConfigSchema((z) =>
+ *   z.object({
+ *     autoRender: z.boolean(),
+ *     logo: z.string().optional(),
+ *   })
+ * );
+ * ```
+ */
 export const extendConfigSchema = <T extends z.AnyZodObject>(
   extendFn: (_z: typeof z) => T,
 ) => {
   return baseSchema.merge(extendFn(z));
 };
 
+/**
+ * Custom error thrown when configuration validation fails.
+ *
+ * Provides detailed error messages showing which fields failed validation
+ * and includes the full config object for debugging.
+ */
 class InvalidConfigError extends Error {
   constructor(error: ZodError, config: Record<string, any>) {
     const message = error.issues
@@ -120,7 +187,7 @@ class InvalidConfigError extends Error {
 ${message}`;
     try {
       output = `${output}
-      
+
 Current config: ${JSON.stringify(config, null, 2)}`;
     } catch (e) {
       //
@@ -130,11 +197,23 @@ Current config: ${JSON.stringify(config, null, 2)}`;
   }
 }
 
+/**
+ * Abstract base class for PageSpy configuration management.
+ *
+ * Platform-specific packages should extend this class and provide:
+ * - A Zod schema for validation (via `schema` property)
+ * - Default platform-specific config values (via `platform` property)
+ *
+ * @template C - The configuration type (extends InitConfigBase)
+ */
 export abstract class ConfigBase<C extends InitConfigBase> {
+  /** Zod schema for validating the merged configuration */
   protected abstract schema: z.ZodSchema<C>;
 
+  /** Platform-specific default configuration values */
   protected abstract platform: C;
 
+  /** Base configuration values shared across all platforms */
   protected get base(): InitConfigBase {
     return {
       api: '',
@@ -143,7 +222,7 @@ export abstract class ConfigBase<C extends InitConfigBase> {
       enableSSL: true,
       messageCapacity: 1000,
       useSecret: false,
-      secret: '', // secret is private and would generated automatically when enable "useSecret: true"
+      secret: '', // Generated automatically when useSecret is true
       offline: false,
       serializeData: false,
       disabledPlugins: [],
@@ -151,10 +230,23 @@ export abstract class ConfigBase<C extends InitConfigBase> {
     };
   }
 
+  /** Current merged configuration value */
   protected value: Required<C> = {
     ...this.base,
   } as Required<C>;
 
+  /**
+   * Merges user-provided configuration with base and platform defaults.
+   *
+   * Configuration priority (highest to lowest):
+   * 1. User-provided config
+   * 2. Platform defaults
+   * 3. Base defaults
+   *
+   * @param userCfg - User-provided configuration object
+   * @returns The fully merged and validated configuration
+   * @throws {InvalidConfigError} If validation fails
+   */
   public mergeConfig = (userCfg: Record<string, any>): Required<C> => {
     const value = {
       ...this.base,
@@ -170,10 +262,21 @@ export abstract class ConfigBase<C extends InitConfigBase> {
     return this.value;
   };
 
+  /**
+   * Gets the current configuration value.
+   *
+   * @returns The current merged configuration
+   */
   get() {
     return this.value;
   }
 
+  /**
+   * Updates a single configuration field.
+   *
+   * @param key - Configuration field name
+   * @param val - New value for the field
+   */
   set<T extends keyof C>(key: T, val: C[T]) {
     this.value[key] = val;
   }
